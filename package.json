@@ -3,6 +3,9 @@
   "version": "1.0.1",
   "description": "Read any URL in your terminal — powered by Jina AI reader",
   "main": "index.js",
+  "scripts": {
+    "test": "node --test test/*.test.js"
+  },
   "bin": {
     "termread": "index.js"
   },
@@ -23,11 +26,11 @@
   "license": "MIT",
   "repository": {
     "type": "git",
-    "url": "git+https://github.com/sagiriiiiii/termread.git"
+    "url": "git+https://github.com/xfun-dev/termread.git"
   },
-  "homepage": "https://github.com/sagiriiiiii/termread#readme",
+  "homepage": "https://github.com/xfun-dev/termread#readme",
   "bugs": {
-    "url": "https://github.com/sagiriiiiii/termread/issues"
+    "url": "https://github.com/xfun-dev/termread/issues"
   },
   "engines": {
     "node": ">=18.0.0"

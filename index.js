@@ -19,22 +19,47 @@ const R   = '\x1b[0m';   // reset
 const REV = '\x1b[7m';   // reverse（inline code 背景）
 
 // ─────────────────────────── 工具函数 ────────────────────────────────
-// 计算去除 ANSI 后的可视长度
-function vlen(s) { return s.replace(/\x1b\[[0-9;]*m/g, '').length; }
+// 全角字符（中日韩文字、全角标点、emoji 等）在终端里占两列
+const WIDE = /[\u1100-\u115f\u2e80-\u303e\u3041-\u33ff\u3400-\u4dbf\u4e00-\u9fff\ua000-\ua4cf\uac00-\ud7a3\uf900-\ufaff\ufe30-\ufe4f\uff00-\uff60\uffe0-\uffe6]|[\u{1f300}-\u{1f64f}\u{1f900}-\u{1f9ff}\u{20000}-\u{3fffd}]/u;
+const ANSI = /\x1b\[[0-9;]*m/g;
+function cw(ch) { return WIDE.test(ch) ? 2 : 1; }
 
-// 自动换行，保留左边距
-function wrap(text, width, first = SP, rest = SP) {
-  const words = text.split(/\s+/).filter(Boolean);
-  const lines = [];
-  let cur = '', indent = first;
-  for (const w of words) {
-    const next = cur ? cur + ' ' + w : w;
-    if (vlen(indent) + vlen(next) > width) {
-      if (cur) lines.push(indent + cur);
-      cur = w; indent = rest;
-    } else { cur = next; }
+// 计算去除 ANSI 后在终端里占的列数
+function vlen(s) { let n = 0; for (const ch of s.replace(ANSI, '')) n += cw(ch); return n; }
+
+// 切成可断行的片段：ANSI 码单独一段；中日韩文字每个字是一段（字和字之间都能断行），其余按空格分词
+function tokens(text) {
+  const out = [];
+  const re = /(\x1b\[[0-9;]*m)|(\s+)|([\u2e80-\u9fff\uac00-\ud7a3\uf900-\ufaff\uff00-\uffef\u{20000}-\u{3fffd}])|([^\s\x1b\u2e80-\u9fff\uac00-\ud7a3\uf900-\ufaff\uff00-\uffef\u{20000}-\u{3fffd}]+)/gu;
+  let m;
+  while ((m = re.exec(text)) !== null) {
+    if (m[1]) out.push({ t: m[1], w: 0, ansi: true });
+    else if (m[2]) out.push({ t: ' ', w: 1, space: true });
+    else out.push({ t: m[0], w: vlen(m[0]), cjk: !!m[3] });
   }
-  if (cur) lines.push(indent + cur);
+  return out;
+}
+
+// 行首不该出现的标点（避头尾）
+const NO_START = /^[，。、；：？！）」』》〉】,.;:?!)\]}]/;
+
+// 自动换行，保留左边距；中文按字断行，英文按词断行，超长的词（如 URL）硬切
+function wrap(text, width, first = SP, rest = SP) {
+  const lines = [];
+  let cur = '', curW = 0, indent = first, pendingAnsi = '';
+  const avail = () => Math.max(10, width - vlen(indent));
+  const flush = () => { lines.push(indent + cur.replace(/\s+$/, '') + (pendingAnsi ? R : '')); cur = pendingAnsi; curW = 0; indent = rest; };
+  for (const tk of tokens(text)) {
+    if (tk.ansi) { cur += tk.t; pendingAnsi = tk.t === R ? '' : pendingAnsi + tk.t; continue; }
+    if (tk.space) { if (curW > 0) { cur += ' '; curW += 1; } continue; }
+    if (curW + tk.w > avail() && curW > 0 && !NO_START.test(tk.t)) flush();
+    if (tk.w > avail()) { // 超长片段硬切
+      for (const ch of tk.t) { if (curW + cw(ch) > avail()) flush(); cur += ch; curW += cw(ch); }
+      continue;
+    }
+    cur += tk.t; curW += tk.w;
+  }
+  if (curW > 0 || cur.trim()) lines.push(indent + cur.replace(/\s+$/, ''));
   return lines.join('\n');
 }
 
@@ -49,21 +74,26 @@ function shortenUrl(url) {
 
 // ────────────────────────── 内联元素渲染 ──────────────────────────────
 function inline(text) {
-  return text
+  // 行内代码和链接里的 URL 先换成占位符，免得里面的 _ 和 * 被当成斜体/粗体
+  const keep = [];
+  const hold = (s) => `\u0000${keep.push(s) - 1}\u0000`;
+  const out = text
+    // 行内图片忽略
+    .replace(/!\[[^\]]*\]\([^)]*\)/g, '')
+    .replace(/`([^`\n]+)`/g, (_, c) => hold(`${REV} ${c} ${R}`))
+    // 链接：显示文字，URL 暗色附后
+    .replace(/\[([^\]]+)\]\(([^)\s]+)(?:\s+"[^"]*")?\)/g, (_, label, href) => {
+      if (label.startsWith('http') || label === href) return hold(`${D}${UN}${shortenUrl(href)}${R}`);
+      return `${UN}${label}${R}` + hold(`${D} (${shortenUrl(href)})${R}`);
+    })
+    .replace(/https?:\/\/[^\s)]+/g, (u) => hold(u))
     .replace(/\*\*\*(.+?)\*\*\*/gs, `${B}${IT}$1${R}`)
     .replace(/\*\*(.+?)\*\*/gs,     `${B}$1${R}`)
-    .replace(/\*(.+?)\*/gs,         `${IT}$1${R}`)
-    .replace(/__(.+?)__/gs,         `${B}$1${R}`)
-    .replace(/_(.+?)_/gs,           `${IT}$1${R}`)
-    .replace(/`([^`\n]+)`/g,        `${REV} $1 ${R}`)
-    .replace(/~~(.+?)~~/g,          `${D}$1${R}`)
-    // 链接：显示文字，URL 暗色附后
-    .replace(/\[([^\]]+)\]\(([^)]+)\)/g, (_, label, href) => {
-      if (label.startsWith('http') || label === href) return `${D}${UN}${shortenUrl(href)}${R}`;
-      return `${UN}${label}${R}${D} (${shortenUrl(href)})${R}`;
-    })
-    // 行内图片忽略
-    .replace(/!\[[^\]]*\]\([^)]*\)/g, '');
+    .replace(/(^|[^\w*])\*(?!\s)(.+?)(?<!\s)\*(?![\w*])/gs, `$1${IT}$2${R}`)
+    .replace(/(^|[^\w])__(.+?)__(?!\w)/gs, `$1${B}$2${R}`)
+    .replace(/(^|[^\w])_(?!\s)(.+?)(?<!\s)_(?!\w)/gs, `$1${IT}$2${R}`)
+    .replace(/~~(.+?)~~/g,          `${D}$1${R}`);
+  return out.replace(/\u0000(\d+)\u0000/g, (_, i) => keep[+i]);
 }
 
 // ──────────────────────── 块级元素渲染函数 ───────────────────────────
@@ -139,8 +169,8 @@ function renderCode(code, lang) {
   const barW = TW;
   const top = '┌' + (label ? `─${label}` : '') + '─'.repeat(Math.max(0, barW - vlen(label) - 1)) + '┐';
   const bot = '└' + '─'.repeat(barW) + '┘';
-  const body = code.split('\n').map(l => {
-    const pad = ' '.repeat(Math.max(0, barW - l.length - 1));
+  const body = code.replace(/\t/g, '  ').split('\n').map(l => {
+    const pad = ' '.repeat(Math.max(0, barW - vlen(l) - 1));
     return `${SP}${D}│${R} ${l}${pad}${D}│${R}`;
   }).join('\n');
   return `\n${SP}${D}${top}${R}\n${body}\n${SP}${D}${bot}${R}\n\n`;
@@ -345,4 +375,5 @@ async function fetchContent(url) {
   return res.text();
 }
 
-main();
+if (require.main === module) main();
+else module.exports = { vlen, wrap, inline, renderMarkdown, extractJinaMeta };
