@@ -366,14 +366,22 @@ async function main() {
   }
 }
 
+// Jina 拒绝匿名请求（401）或限流（429）时，说清楚原因和办法，而不是只给一个状态码
+function fetchError(status, body, hasKey) {
+  const why = String(body || '').replace(/^\w*Error:\s*/, '').trim().split('\n')[0].slice(0, 160);
+  let msg = `HTTP ${status}${why ? ` · ${why}` : ''}`;
+  if ((status === 401 || status === 429) && !hasKey) msg += '\n   Jina 拒绝了匿名请求，过一会儿再试，或者设置 JINA_API_KEY（https://jina.ai/reader 免费领取）。';
+  return msg;
+}
+
 async function fetchContent(url) {
-  const res = await fetch(`${JINA_PREFIX}${url}`, {
-    headers: { 'Accept': 'text/markdown', 'X-Timeout': '30' },
-    signal: AbortSignal.timeout(30000),
-  });
-  if (!res.ok) throw new Error(`HTTP ${res.status}`);
+  const key = (process.env.JINA_API_KEY || '').trim();
+  const headers = { 'Accept': 'text/markdown', 'X-Timeout': '30' };
+  if (key) headers.Authorization = `Bearer ${key}`;
+  const res = await fetch(`${JINA_PREFIX}${url}`, { headers, signal: AbortSignal.timeout(30000) });
+  if (!res.ok) throw new Error(fetchError(res.status, await res.text().catch(() => ''), !!key));
   return res.text();
 }
 
 if (require.main === module) main();
-else module.exports = { vlen, wrap, inline, renderMarkdown, extractJinaMeta };
+else module.exports = { vlen, wrap, inline, renderMarkdown, extractJinaMeta, fetchError };

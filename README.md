@@ -34,6 +34,12 @@ termread <url>
 termread --help
 ```
 
+If Jina starts refusing anonymous requests (HTTP 401/429), set a free [Jina API key](https://jina.ai/reader):
+
+```bash
+export JINA_API_KEY=jina_xxx
+```
+
 ## How it works
 
 `termread` passes your URL through `https://r.jina.ai/<url>`, which strips page chrome and returns clean Markdown. The Markdown is rendered with a custom terminal renderer, and images are decoded and drawn as 24-bit color half-block characters using [jimp](https://github.com/jimp-dev/jimp).

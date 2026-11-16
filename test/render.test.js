@@ -1,7 +1,7 @@
 'use strict';
 const test = require('node:test');
 const assert = require('node:assert');
-const { vlen, wrap, inline } = require('../index.js');
+const { vlen, wrap, inline, fetchError } = require('../index.js');
 const strip = (s) => s.replace(/\x1b\[[0-9;]*m/g, '');
 
 test('vlen counts CJK as two columns', () => {
@@ -43,4 +43,12 @@ test('real emphasis still renders', () => {
   assert.ok(inline('this is *italic* text').includes('\x1b[3mitalic'));
   assert.ok(inline('**bold**').includes('\x1b[1mbold'));
   assert.ok(inline('a * b * c').indexOf('\x1b[3m') === -1, 'spaced asterisks are not emphasis');
+});
+
+test('Jina 401 explains itself and points to JINA_API_KEY', () => {
+  const m = fetchError(401, 'AuthenticationRequiredError: You have been blocked from performing anonymous queries due to bad IP reputation. Please authenticate.', false);
+  assert.ok(m.startsWith('HTTP 401 · You have been blocked'), m);
+  assert.ok(m.includes('JINA_API_KEY'));
+  assert.ok(!fetchError(401, 'nope', true).includes('JINA_API_KEY'), 'no hint when a key is already set');
+  assert.strictEqual(fetchError(500, ''), 'HTTP 500');
 });
